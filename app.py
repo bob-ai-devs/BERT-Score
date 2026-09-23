@@ -1,81 +1,68 @@
 import streamlit as st
 import pandas as pd
-import torch
 
-from bert_score import score
+from bert_score import score as bert_score
 from transformers import AutoTokenizer
 
-# ---------------------------------------------------------
+
+# =========================================================
 # PAGE CONFIG
-# ---------------------------------------------------------
+# =========================================================
+
 st.set_page_config(
     page_title="BERTScore Component Analyzer",
     page_icon="🧠",
     layout="wide"
 )
 
+
+# =========================================================
+# TITLE
+# =========================================================
+
 st.title("🧠 BERTScore Component Analyzer")
+
 st.caption(
-    "Compare two strings and inspect BERTScore precision, recall, "
-    "F1 and token-level components."
+    "Compare a generated response with a reference and "
+    "inspect Precision, Recall and F1."
 )
 
 
 # =========================================================
-# CACHED COMPONENTS
+# CACHED TOKENIZER
 # =========================================================
 
 @st.cache_resource(show_spinner="Loading tokenizer...")
 def load_tokenizer(model_type: str):
-    """
-    Load tokenizer once per model.
-    Cached across Streamlit reruns and user sessions.
-    """
-    return AutoTokenizer.from_pretrained(model_type)
 
-
-@st.cache_resource(show_spinner="Loading BERTScore model...")
-def load_bertscore_model(model_type: str):
-    """
-    Load BERTScore model once.
-
-    bert_score internally manages the model, but explicitly
-    loading it here prevents repeated Hugging Face model
-    downloads/tokenizer initialization when doing additional
-    token-level analysis.
-    """
-    from transformers import AutoModel
-
-    model = AutoModel.from_pretrained(model_type)
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    model = model.to(device)
-    model.eval()
-
-    return model, device
+    return AutoTokenizer.from_pretrained(
+        model_type
+    )
 
 
 # =========================================================
-# INPUT
+# INPUT TEXT
 # =========================================================
 
 col1, col2 = st.columns(2)
 
 with col1:
-    candidate = st.text_area(
-        "Candidate / Generated Text",
+
+    our_resp = st.text_area(
+        "Our Response",
         value="The cat is sitting on the mat.",
-        height=150,
-        key="candidate_text"
+        height=180,
+        key="our_response"
     )
 
+
 with col2:
+
     reference = st.text_area(
-        "Reference / Ground Truth Text",
+        "Reference",
         value="A cat is sitting on a mat.",
-        height=150,
-        key="reference_text"
+        height=180,
+        key="reference"
     )
 
 
@@ -85,35 +72,49 @@ with col2:
 
 with st.expander("⚙️ BERTScore Settings", expanded=True):
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
+
+    # -----------------------------------------------------
+    # LANGUAGE
+    # -----------------------------------------------------
 
     with c1:
+
         lang = st.selectbox(
             "Language",
-            ["en", "hi", "fr", "de", "es"],
-            index=0
+            options=[
+                "en",
+                "hi",
+                "fr",
+                "de",
+                "es"
+            ],
+            index=0,
+            key="bertscore_language"
         )
+
+
+    # -----------------------------------------------------
+    # MODEL
+    # -----------------------------------------------------
 
     with c2:
-        model_type = st.text_input(
-            "Model",
-            value="roberta-large"
+
+        model_options = {
+            "Default BERTScore Model": None,
+            "RoBERTa Large": "roberta-large",
+            "RoBERTa Base": "roberta-base",
+            "DistilRoBERTa Base": "distilroberta-base",
+        }
+
+        model_label = st.selectbox(
+            "BERTScore Model",
+            options=list(model_options.keys()),
+            index=0,
+            key="bertscore_model"
         )
 
-    with c3:
-        use_idf = st.checkbox(
-            "Use IDF weighting",
-            value=False
-        )
-
-
-# =========================================================
-# DEVICE
-# =========================================================
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-st.caption(f"🖥️ Device: `{device}`")
+        selected_model = model_options[model_label]
 
 
 # =========================================================
@@ -126,77 +127,119 @@ if st.button(
     use_container_width=True
 ):
 
-    if not candidate.strip() or not reference.strip():
-        st.warning("Please enter both candidate and reference text.")
+    # -----------------------------------------------------
+    # VALIDATION
+    # -----------------------------------------------------
+
+    if not our_resp.strip():
+
+        st.warning(
+            "Please enter Our Response."
+        )
+
         st.stop()
 
-    # -----------------------------------------------------
-    # LOAD CACHED COMPONENTS
-    # -----------------------------------------------------
 
-    tokenizer = load_tokenizer(model_type)
+    if not reference.strip():
 
-    # Load model only once and keep it cached.
-    #
-    # This is useful if you later want to expose the
-    # embedding/similarity components.
-    bert_model, model_device = load_bertscore_model(model_type)
+        st.warning(
+            "Please enter the Reference."
+        )
 
-    # -----------------------------------------------------
+        st.stop()
+
+
+    # =====================================================
     # BERTSCORE
-    # -----------------------------------------------------
+    # =====================================================
 
     with st.spinner("Calculating BERTScore..."):
 
         try:
 
-            P, R, F1 = score(
-                [candidate],
-                [reference],
-                lang=lang,
-                model_type=model_type,
-                idf=use_idf,
-                verbose=False,
-                rescale_with_baseline=True
-            )
+            # -------------------------------------------------
+            # IMPORTANT:
+            #
+            # When "Default BERTScore Model" is selected,
+            # this is intentionally the SAME call as your
+            # previous implementation:
+            #
+            # P_o, R_o, F1_o = bert_score(
+            #     [our_resp],
+            #     [reference],
+            #     lang='en',
+            #     verbose=False
+            # )
+            # -------------------------------------------------
 
-            precision = float(P[0])
-            recall = float(R[0])
-            f1 = float(F1[0])
+            if selected_model is None:
+
+                P_o, R_o, F1_o = bert_score(
+                    [our_resp],
+                    [reference],
+                    lang=lang,
+                    verbose=False
+                )
+
+            else:
+
+                P_o, R_o, F1_o = bert_score(
+                    [our_resp],
+                    [reference],
+                    lang=lang,
+                    model_type=selected_model,
+                    verbose=False
+                )
+
+
+            # -------------------------------------------------
+            # SAME AS YOUR EXISTING CODE
+            # -------------------------------------------------
+
+            precision = P_o.item()
+            recall = R_o.item()
+            f1 = F1_o.item()
+
 
         except Exception as e:
 
             st.error(
-                f"Error while calculating BERTScore: {e}"
+                f"BERTScore calculation failed: {e}"
             )
 
             st.stop()
 
 
     # =====================================================
-    # SUMMARY
+    # MAIN SCORES
     # =====================================================
 
     st.subheader("📊 BERTScore")
 
     m1, m2, m3 = st.columns(3)
 
+
     with m1:
+
         st.metric(
             "Precision",
-            f"{precision:.4f}"
+            f"{precision:.6f}"
         )
+
 
     with m2:
+
         st.metric(
             "Recall",
-            f"{recall:.4f}"
+            f"{recall:.6f}"
         )
 
+
     with m3:
+
         st.metric(
             "F1",
-            f"{f1:.4f}"
+            f"{f1:.6f}"
         )
 
 
@@ -204,22 +247,28 @@ if st.button(
     # COMPONENT TABLE
     # =====================================================
 
-    st.subheader("🔍 BERTScore Components")
+    st.subheader("🔍 Score Components")
 
-    component_df = pd.DataFrame({
-        "Component": [
-            "Precision",
-            "Recall",
-            "F1"
-        ],
-        "Score": [
-            precision,
-            recall,
-            f1
-        ]
-    })
+    component_df = pd.DataFrame(
+        {
+            "Component": [
+                "Precision",
+                "Recall",
+                "F1"
+            ],
 
-    component_df["Score"] = component_df["Score"].round(6)
+            "Score": [
+                precision,
+                recall,
+                f1
+            ]
+        }
+    )
+
+    component_df["Score"] = component_df[
+        "Score"
+    ].round(6)
+
 
     st.dataframe(
         component_df,
@@ -232,72 +281,129 @@ if st.button(
     # TOKENIZATION
     # =====================================================
 
-    st.subheader("🔤 Token-Level Analysis")
-
-    candidate_tokens = tokenizer.tokenize(candidate)
-    reference_tokens = tokenizer.tokenize(reference)
-
+    st.subheader("🔤 Tokenization")
 
     # -----------------------------------------------------
-    # CANDIDATE TOKENS
+    # Determine tokenizer
     # -----------------------------------------------------
 
-    st.markdown("### Candidate Tokens")
+    if selected_model is not None:
 
-    candidate_df = pd.DataFrame({
-        "Position": range(
-            1,
-            len(candidate_tokens) + 1
-        ),
-        "Token": candidate_tokens
-    })
+        tokenizer_model = selected_model
 
-    st.dataframe(
-        candidate_df,
-        use_container_width=True,
-        hide_index=True
-    )
+    else:
+
+        # BERTScore's default English model is used for
+        # the normal call. For displaying tokens, use the
+        # standard RoBERTa tokenizer.
+        tokenizer_model = "roberta-large"
 
 
-    # -----------------------------------------------------
-    # REFERENCE TOKENS
-    # -----------------------------------------------------
+    try:
 
-    st.markdown("### Reference Tokens")
+        tokenizer = load_tokenizer(
+            tokenizer_model
+        )
 
-    reference_df = pd.DataFrame({
-        "Position": range(
-            1,
-            len(reference_tokens) + 1
-        ),
-        "Token": reference_tokens
-    })
+        our_tokens = tokenizer.tokenize(
+            our_resp
+        )
 
-    st.dataframe(
-        reference_df,
-        use_container_width=True,
-        hide_index=True
-    )
+        reference_tokens = tokenizer.tokenize(
+            reference
+        )
+
+
+        # -------------------------------------------------
+        # TOKEN COLUMNS
+        # -------------------------------------------------
+
+        t1, t2 = st.columns(2)
+
+
+        with t1:
+
+            st.markdown(
+                "### Our Response Tokens"
+            )
+
+            our_token_df = pd.DataFrame(
+                {
+                    "Position": range(
+                        1,
+                        len(our_tokens) + 1
+                    ),
+
+                    "Token": our_tokens
+                }
+            )
+
+            st.dataframe(
+                our_token_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+
+        with t2:
+
+            st.markdown(
+                "### Reference Tokens"
+            )
+
+            reference_token_df = pd.DataFrame(
+                {
+                    "Position": range(
+                        1,
+                        len(reference_tokens) + 1
+                    ),
+
+                    "Token": reference_tokens
+                }
+            )
+
+            st.dataframe(
+                reference_token_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+
+    except Exception as e:
+
+        st.warning(
+            f"Tokenization display could not be loaded: {e}"
+        )
 
 
     # =====================================================
-    # RAW OUTPUT
+    # RAW TENSOR OUTPUT
     # =====================================================
 
     st.subheader("🧮 Raw BERTScore Output")
 
-    raw_df = pd.DataFrame({
-        "Metric": [
-            "Precision",
-            "Recall",
-            "F1"
-        ],
-        "Tensor": [
-            str(P),
-            str(R),
-            str(F1)
-        ]
-    })
+    raw_df = pd.DataFrame(
+        {
+            "Metric": [
+                "Precision",
+                "Recall",
+                "F1"
+            ],
+
+            "Tensor": [
+                str(P_o),
+                str(R_o),
+                str(F1_o)
+            ],
+
+            "Value": [
+                precision,
+                recall,
+                f1
+            ]
+        }
+    )
+
 
     st.dataframe(
         raw_df,
@@ -307,35 +413,84 @@ if st.button(
 
 
     # =====================================================
-    # INTERPRETATION
+    # INPUT SUMMARY
     # =====================================================
 
-    st.subheader("📌 Interpretation")
+    st.subheader("📝 Comparison Details")
 
-    interpretation_df = pd.DataFrame({
-        "Metric": [
-            "Precision",
-            "Recall",
-            "F1"
-        ],
-        "Meaning": [
-            "How strongly candidate tokens are semantically supported by the reference.",
-            "How much of the reference meaning is captured by the candidate.",
-            "Harmonic mean of Precision and Recall."
-        ],
-        "Score": [
-            precision,
-            recall,
-            f1
-        ]
-    })
+    details_df = pd.DataFrame(
+        {
+            "Parameter": [
+                "Language",
+                "Model Selection",
+                "Actual Model Argument",
+                "IDF Weighting",
+                "Baseline Rescaling"
+            ],
 
-    interpretation_df["Score"] = (
-        interpretation_df["Score"].round(6)
+            "Value": [
+                lang,
+                model_label,
+                selected_model if selected_model else "BERTScore default",
+                "No",
+                "No"
+            ]
+        }
     )
 
+
     st.dataframe(
-        interpretation_df,
+        details_df,
         use_container_width=True,
         hide_index=True
+    )
+
+
+    # =====================================================
+    # TEXT DISPLAY
+    # =====================================================
+
+    st.subheader("📄 Input Text")
+
+    d1, d2 = st.columns(2)
+
+
+    with d1:
+
+        st.markdown("**Our Response**")
+
+        st.info(our_resp)
+
+
+    with d2:
+
+        st.markdown("**Reference**")
+
+        st.info(reference)
+
+
+    # =====================================================
+    # FORMULA
+    # =====================================================
+
+    st.subheader("📐 BERTScore Components")
+
+    st.markdown(
+        """
+        **Precision**
+
+        Measures the semantic similarity of the candidate/
+        response tokens against the reference.
+
+        **Recall**
+
+        Measures how well the reference tokens are captured
+        by the candidate/response.
+
+        **F1**
+
+        The harmonic mean of Precision and Recall:
+
+        `F1 = 2 × Precision × Recall / (Precision + Recall)`
+        """
     )
