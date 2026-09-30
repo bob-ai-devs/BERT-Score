@@ -794,3 +794,4 @@ Detailed Analysis
         └── Input Comparison
 
 This makes the application suitable for **LLM/NLP evaluation, debugging, benchmarking, and semantic similarity analysis**.
+```
